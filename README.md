@@ -84,3 +84,59 @@ cd /root/ComfyUI
 - 启动报 `numpy has no attribute 'long'` → 用错 Python（跑到 base 3.13 了）。
 - 老工作流弹「加载子工作流蓝图失败 x4」→ 里面内嵌了已停用插件的子图，不影响出图，建议新建工作流。
 - Manager 的「Install via Git URL」会被安全等级拦住，装节点走 **Custom Nodes Manager** 搜索安装。
+
+## 5. 安装记录
+
+### 2026-11-24 · Qwen-Image-Edit-2511 三件套 + 4 步 LoRA
+
+实际下载情况（仙宫云 4090D，磁盘 226G / 可用约 105G）：
+
+| 文件 | 大小 | 校验值（字节） | 状态 |
+| --- | --- | --- | --- |
+| `qwen_image_edit_2511_int8_convrot.safetensors` | 19.0 G | 20499083824 | ✅ 已下载 |
+| `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors` | 850 MB | 849608296 | 待下 / 已下 |
+| `qwen_2.5_vl_7b_fp8_scaled.safetensors` | 9.4 G | 9384670680 | 已有 |
+| `qwen_image_vae.safetensors` | 254 MB | 253806246 | 已有 |
+
+下载源（魔搭 ModelScope，走直链 + `-C -` 断点续传）：
+
+```bash
+# 扩散模型（Comfy-Org/Qwen-Image-Edit_ComfyUI）
+curl -L -C - --retry 20 --retry-all-errors \
+  -o /root/ComfyUI/models/diffusion_models/qwen_image_edit_2511_int8_convrot.safetensors \
+  "https://www.modelscope.cn/api/v1/models/Comfy-Org/Qwen-Image-Edit_ComfyUI/repo?Revision=master&FilePath=split_files/diffusion_models/qwen_image_edit_2511_int8_convrot.safetensors"
+
+# 文本编码器（Comfy-Org/Qwen-Image_ComfyUI）
+curl -L -C - --retry 20 --retry-all-errors \
+  -o /root/ComfyUI/models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors \
+  "https://www.modelscope.cn/api/v1/models/Comfy-Org/Qwen-Image_ComfyUI/repo?Revision=master&FilePath=split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
+
+# VAE（Comfy-Org/Qwen-Image_ComfyUI）
+curl -L -C - --retry 20 --retry-all-errors \
+  -o /root/ComfyUI/models/vae/qwen_image_vae.safetensors \
+  "https://www.modelscope.cn/api/v1/models/Comfy-Org/Qwen-Image_ComfyUI/repo?Revision=master&FilePath=split_files/vae/qwen_image_vae.safetensors"
+
+# 4 步加速 LoRA（lightx2v/Qwen-Image-Edit-2511-Lightning）
+curl -L -C - --retry 20 --retry-all-errors \
+  -o /root/ComfyUI/models/loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors \
+  "https://www.modelscope.cn/api/v1/models/lightx2v/Qwen-Image-Edit-2511-Lightning/repo?Revision=master&FilePath=Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+```
+
+同仓库可选版本：`...-8steps-V1.0-bf16`（8 步，质量略高）、`...-4steps-V1.0-fp32`（1.7 G）、
+`qwen_image_edit_2511_fp8_e4m3fn_scaled_lightning_comfyui_4steps_v1.0.safetensors`（20.4 G，LoRA 已融进底模，不用再挂 LoraLoader）。
+
+### Qwen-Image-Edit-2511 工作流参数
+
+| 节点 | 设置 |
+| --- | --- |
+| `UNETLoader` | `qwen_image_edit_2511_int8_convrot.safetensors` |
+| `LoraLoaderModelOnly` | `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors`，strength 1.0 |
+| `CLIPLoader` | `qwen_2.5_vl_7b_fp8_scaled.safetensors`，类型 **qwen_image** |
+| `VAELoader` | `qwen_image_vae.safetensors` |
+| `TextEncodeQwenImageEditPlus` | clip ← CLIPLoader；vae ← VAELoader；image1~3 ← 参考图（最多 3 张） |
+| `ModelSamplingAuraFlow` | shift 3.1 |
+| KSampler | steps 4 / cfg 1.0 / euler / simple / denoise 1.0 |
+
+不挂 4 步 LoRA 时：steps 40 / cfg 4.0。
+
+> 常见错误：`CLIPLoader` 的「类型」误选 `lumina2`（那是 Z-Image 用的），编辑模型必须选 `qwen_image`，否则跑不出正常结果。
